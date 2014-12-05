@@ -1,4 +1,4 @@
-/* Copyright (c) 2010-2012, The Linux Foundation. All rights reserved.
+/* Copyright (c) 2010-2013, The Linux Foundation. All rights reserved.
  *
  * This program is free software; you can redistribute it and/or modify
  * it under the terms of the GNU General Public License version 2 and
@@ -15,6 +15,7 @@
 #include <linux/iommu.h>
 #include <linux/memory_alloc.h>
 #include <linux/platform_device.h>
+#include <linux/vmalloc.h>
 #include <linux/rbtree.h>
 #include <linux/slab.h>
 #include <linux/idr.h>
@@ -25,9 +26,6 @@
 #include <mach/iommu_domains.h>
 #include <mach/socinfo.h>
 #include <mach/msm_subsystem_map.h>
-
-/* dummy 64K for overmapping */
-char iommu_dummy[2*SZ_64K-4];
 
 struct msm_iova_data {
 	struct rb_node node;
@@ -51,22 +49,34 @@ int msm_use_iommu()
 	return iommu_present(&platform_bus_type);
 }
 
+bool msm_iommu_page_size_is_supported(unsigned long page_size)
+{
+	return page_size == SZ_4K
+		|| page_size == SZ_64K
+		|| page_size == SZ_1M
+		|| page_size == SZ_16M;
+}
+
 int msm_iommu_map_extra(struct iommu_domain *domain,
 				unsigned long start_iova,
+				unsigned long phy_addr,
 				unsigned long size,
 				unsigned long page_size,
-				int cached)
+				int prot)
 {
 	int ret = 0;
 	int i = 0;
-	unsigned long phy_addr = ALIGN(virt_to_phys(iommu_dummy), page_size);
 	unsigned long temp_iova = start_iova;
-	if (page_size == SZ_4K) {
+	/* the extra "padding" should never be written to. map it
+	 * read-only. */
+	prot &= ~IOMMU_WRITE;
+
+	if (msm_iommu_page_size_is_supported(page_size)) {
 		struct scatterlist *sglist;
 		unsigned int nrpages = PFN_ALIGN(size) >> PAGE_SHIFT;
 		struct page *dummy_page = phys_to_page(phy_addr);
 
-		sglist = kmalloc(sizeof(*sglist) * nrpages, GFP_KERNEL);
+		sglist = vmalloc(sizeof(*sglist) * nrpages);
 		if (!sglist) {
 			ret = -ENOMEM;
 			goto out;
@@ -77,13 +87,13 @@ int msm_iommu_map_extra(struct iommu_domain *domain,
 		for (i = 0; i < nrpages; i++)
 			sg_set_page(&sglist[i], dummy_page, PAGE_SIZE, 0);
 
-		ret = iommu_map_range(domain, temp_iova, sglist, size, cached);
+		ret = iommu_map_range(domain, temp_iova, sglist, size, prot);
 		if (ret) {
 			pr_err("%s: could not map extra %lx in domain %p\n",
 				__func__, start_iova, domain);
 		}
 
-		kfree(sglist);
+		vfree(sglist);
 	} else {
 		unsigned long order = get_order(page_size);
 		unsigned long aligned_size = ALIGN(size, page_size);
@@ -91,7 +101,7 @@ int msm_iommu_map_extra(struct iommu_domain *domain,
 
 		for (i = 0; i < nrpages; i++) {
 			ret = iommu_map(domain, temp_iova, phy_addr, page_size,
-						cached);
+						prot);
 			if (ret) {
 				pr_err("%s: could not map %lx in domain %p, error: %d\n",
 					__func__, start_iova, domain, ret);
@@ -138,7 +148,7 @@ static int msm_iommu_map_iova_phys(struct iommu_domain *domain,
 	int prot = IOMMU_WRITE | IOMMU_READ;
 	prot |= cached ? IOMMU_CACHE : 0;
 
-	sglist = kmalloc(sizeof(*sglist), GFP_KERNEL);
+	sglist = vmalloc(sizeof(*sglist));
 	if (!sglist) {
 		ret = -ENOMEM;
 		goto err1;
@@ -155,7 +165,7 @@ static int msm_iommu_map_iova_phys(struct iommu_domain *domain,
 			__func__, iova, domain);
 	}
 
-	kfree(sglist);
+	vfree(sglist);
 err1:
 	return ret;
 
@@ -214,10 +224,10 @@ EXPORT_SYMBOL(msm_iommu_unmap_contig_buffer);
 static struct msm_iova_data *find_domain(int domain_num)
 {
 	struct rb_root *root = &domain_root;
-	struct rb_node *p = root->rb_node;
+	struct rb_node *p;
 
 	mutex_lock(&domain_mutex);
-
+	p = root->rb_node;
 	while (p) {
 		struct msm_iova_data *node;
 

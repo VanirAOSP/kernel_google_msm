@@ -40,10 +40,6 @@
 #include <linux/dma-mapping.h>
 #include <linux/i2c/bq27520.h>
 
-#ifdef CONFIG_ANDROID_PMEM
-#include <linux/android_pmem.h>
-#endif
-
 #if defined(CONFIG_SMB137B_CHARGER) || defined(CONFIG_SMB137B_CHARGER_MODULE)
 #include <linux/i2c/smb137b.h>
 #endif
@@ -5297,6 +5293,7 @@ static struct platform_device *surf_devices[] __initdata = {
 	&msm_device_tz_log,
 	&msm_rtb_device,
 	&msm8660_iommu_domain_device,
+	&msm8660_pm_8x60,
 };
 
 #ifdef CONFIG_ION_MSM

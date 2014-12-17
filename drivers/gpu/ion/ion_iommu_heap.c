@@ -83,7 +83,6 @@ static struct page_info *alloc_largest_available(unsigned long size,
 		} else {
 			gfp |= GFP_KERNEL;
 		}
-
 		gfp |= __GFP_ZERO;
 		page = alloc_pages(gfp, orders[i]);
 		if (!page)
@@ -111,9 +110,8 @@ static int ion_iommu_heap_allocate(struct ion_heap *heap,
 		struct scatterlist *sg;
 		struct sg_table *table;
 		int j;
-
 		unsigned int num_large_pages = 0;
-		long size_remaining = PAGE_ALIGN(size);
+		unsigned long size_remaining = PAGE_ALIGN(size);
 		unsigned int max_order = orders[0];
 		unsigned int page_tbl_size;
 
@@ -194,6 +192,7 @@ static int ion_iommu_heap_allocate(struct ion_heap *heap,
 	} else {
 		return -ENOMEM;
 	}
+
 
 	sg_free_table(buffer->sg_table);
 err2:
